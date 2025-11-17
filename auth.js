@@ -875,15 +875,8 @@ function setupAuthModalEvents() {
         });
     });
     
-    // Event listener pro formulář
-    const authForm = document.getElementById('authForm');
-    if (authForm) {
-        authForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
-            // Zde bude logika pro zpracování formuláře
-            console.log('Formulář odeslán');
-        });
-    }
+    // Event listener pro formulář - ODSTRANĚNO (přidává se v setupEventListeners)
+    // Duplicitní listenery způsobovaly vícenásobné odesílání formuláře
     
     // Event listener pro tlačítko odeslání SMS kódu
     const btnSendPhoneCode = document.getElementById('btnSendPhoneCode');
@@ -1004,47 +997,8 @@ function showAuthModal(type = 'login') {
             // Debug: Zkontrolovat, jestli už má event listener
             console.log('🔍 AuthForm má event listener:', authFormAfterOpen.onsubmit !== null);
             
-            // Debug: Přidat event listener na tlačítko
-            const submitBtn = authFormAfterOpen.querySelector('.auth-submit-btn');
-            if (submitBtn) {
-                console.log('🔍 Submit tlačítko nalezeno:', submitBtn);
-                submitBtn.addEventListener('click', (e) => {
-                    console.log('🖱️ Submit tlačítko kliknuto!');
-                });
-            } else {
-                console.log('❌ Submit tlačítko nenalezeno!');
-            }
-            
-            authFormAfterOpen.addEventListener('submit', async (e) => {
-                e.preventDefault();
-                console.log('📝 Auth formulář odeslán (po otevření modalu)');
-                console.log('📝 Event listener se spustil!');
-                console.log('📝 Formulář target:', e.target);
-                console.log('📝 Formulář data:', new FormData(e.target));
-                
-                const formData = new FormData(authFormAfterOpen);
-                const email = formData.get('email');
-                const password = formData.get('password');
-                
-                console.log('📧 Formulář data:', { email, password: password ? '***' : 'prázdné' });
-                
-                const modalTitle = document.querySelector('.modal-title');
-                const titleText = modalTitle ? modalTitle.textContent : 'NENALEZEN';
-                const isLogin = titleText === 'Přihlášení';
-                console.log('🔍 Typ akce:', { 
-                    modalTitle: !!modalTitle, 
-                    titleText: titleText, 
-                    isLogin: isLogin 
-                });
-                
-                if (isLogin) {
-                    console.log('🔐 Volám login funkci (po otevření modalu)');
-                    await login(email, password);
-                } else {
-                    console.log('📝 Volám register funkci (po otevření modalu)');
-                    // Zde by byla logika pro registraci
-                }
-            });
+            // ODSTRANĚNO: Duplicitní event listener - formulář už má listener v setupEventListeners()
+            // Přidávání dalšího listeneru způsobovalo vícenásobné odesílání formuláře
         }
     }, 100);
 }
@@ -1337,21 +1291,41 @@ async function loadServices() {
 function setupEventListeners() {
     console.log('🔧 Nastavuji event listenery');
     
-    // Auth formulář
+    // Auth formulář - POUZE JEDEN LISTENER (odstraněny duplicity)
     const authForm = document.getElementById('authForm');
     console.log('🔍 Hledám authForm:', authForm ? 'NALEZEN' : 'NENALEZEN');
     console.log('🔍 AuthForm element:', authForm);
     if (authForm) {
-        console.log('🔧 Auth formulář nalezen, přidávám event listener');
-        console.log('🔧 AuthForm ID:', authForm.id);
-        console.log('🔧 AuthForm class:', authForm.className);
-        authForm.addEventListener('submit', async (e) => {
+        // Odstranit existující listenery - klonovat formulář a nahradit
+        const newForm = authForm.cloneNode(true);
+        authForm.parentNode.replaceChild(newForm, authForm);
+        const cleanAuthForm = document.getElementById('authForm');
+        
+        console.log('🔧 Auth formulář nalezen, přidávám event listener (bez duplicit)');
+        console.log('🔧 AuthForm ID:', cleanAuthForm.id);
+        console.log('🔧 AuthForm class:', cleanAuthForm.className);
+        
+        // Přidat listener pouze jednou
+        cleanAuthForm.addEventListener('submit', async (e) => {
             e.preventDefault();
-            console.log('📝 Auth formulář odeslán');
-            console.log('📝 Formulář target:', e.target);
-            console.log('📝 Formulář data:', new FormData(e.target));
+            e.stopPropagation(); // Zastavit propagaci eventu
             
-            const formData = new FormData(authForm);
+            // Zamezit vícenásobnému odesílání
+            const submitBtn = cleanAuthForm.querySelector('button[type="submit"]');
+            if (submitBtn && submitBtn.disabled) {
+                console.log('⚠️ Formulář se již odesílá, ignoruji další pokus');
+                return;
+            }
+            
+            if (submitBtn) {
+                submitBtn.disabled = true;
+                const originalText = submitBtn.textContent;
+                submitBtn.textContent = 'Zpracovávám...';
+            }
+            
+            console.log('📝 Auth formulář odeslán');
+            
+            const formData = new FormData(cleanAuthForm);
             const email = formData.get('email');
             const password = formData.get('password');
             
@@ -1366,12 +1340,22 @@ function setupEventListeners() {
                 isLogin: isLogin 
             });
             
-            if (isLogin) {
-                console.log('🔐 Volám login funkci');
-                await login(email, password);
-            } else {
-                // U registrace submit už nevolá registraci; používáme tlačítko pro telefonní ověření
-                console.log('ℹ️ Ignoruji submit u registrace, použijte tlačítko pro odeslání SMS.');
+            try {
+                if (isLogin) {
+                    console.log('🔐 Volám login funkci');
+                    await login(email, password);
+                } else {
+                    // U registrace submit už nevolá registraci; používáme tlačítko pro telefonní ověření
+                    console.log('ℹ️ Ignoruji submit u registrace, použijte tlačítko pro odeslání SMS.');
+                }
+            } catch (error) {
+                console.error('❌ Chyba při zpracování formuláře:', error);
+            } finally {
+                // Obnovit tlačítko
+                if (submitBtn) {
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = isLogin ? 'Přihlásit se' : 'Zaregistrovat se';
+                }
             }
         });
     }
