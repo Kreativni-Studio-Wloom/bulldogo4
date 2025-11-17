@@ -130,28 +130,73 @@ async function setupRealtimeListener() {
             throw new Error('Firebase DB není dostupný');
         }
         
-        const { collectionGroup, onSnapshot, getDocs } = await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js');
+        const { collectionGroup, collection, onSnapshot, getDocs, query, limit } = await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js');
+        
+        // DIAGNOSTIKA: Nejdříve zkusit jednoduchý test - načíst jeden uživatelský dokument
+        console.log('🔍 DIAGNOSTIKA: Testuji základní přístup k Firestore...');
+        try {
+            // Zkusit načíst users kolekci (pokud existuje)
+            const usersRef = collection(servicesFirebaseDb, 'users');
+            const usersTest = query(usersRef, limit(1));
+            const usersSnapshot = await getDocs(usersTest);
+            console.log('✅ Test přístupu k users kolekci úspěšný! Počet dokumentů:', usersSnapshot.size);
+        } catch (usersTestError) {
+            console.error('❌ TEST PŘÍSTUPU K USERS KOLEKCI SELHAL:', usersTestError);
+            console.error('Error code:', usersTestError.code);
+            console.error('Error message:', usersTestError.message);
+            if (usersTestError.code === 'permission-denied') {
+                console.error('🚨 KRITICKÁ CHYBA: Nemáte přístup ani k users kolekci!');
+                console.error('🚨 Pravidla v Firebase Console pravděpodobně nejsou publikována nebo jsou špatně nastavena!');
+                console.error('🚨 Zkontrolujte: Firebase Console → Firestore Database → Rules → Publish');
+            }
+        }
         
         // Čtení všech inzerátů napříč uživateli přes collectionGroup
         const servicesRef = collectionGroup(servicesFirebaseDb, 'inzeraty');
-        console.log('📁 Services reference:', servicesRef);
+        console.log('📁 Services reference (collectionGroup):', servicesRef);
         
         // Nejdříve zkusit jednorázový dotaz pro debug
-        console.log('🔍 Testuji přímý dotaz na inzeráty...');
+        console.log('🔍 Testuji collectionGroup dotaz na inzeráty...');
         try {
             const testSnapshot = await getDocs(servicesRef);
-            console.log('✅ Test dotaz úspěšný! Počet inzerátů:', testSnapshot.docs.length);
+            console.log('✅ Test collectionGroup dotaz úspěšný! Počet inzerátů:', testSnapshot.docs.length);
             console.log('Snapshot metadata:', {
                 fromCache: testSnapshot.metadata.fromCache,
                 hasPendingWrites: testSnapshot.metadata.hasPendingWrites
             });
+            
+            if (testSnapshot.docs.length === 0) {
+                console.warn('⚠️ CollectionGroup dotaz funguje, ale nenašel žádné inzeráty!');
+                console.warn('⚠️ Zkontrolujte, zda existují dokumenty v: users/{uid}/inzeraty/');
+                console.warn('⚠️ Zkuste vytvořit testovací inzerát přes aplikaci');
+            }
         } catch (testError) {
-            console.error('❌ TEST DOTAZ SELHAL:', testError);
+            console.error('❌ TEST COLLECTIONGROUP DOTAZ SELHAL:', testError);
             console.error('Error code:', testError.code);
             console.error('Error message:', testError.message);
-            console.error('Pokud vidíte "permission-denied", zkontrolujte Firestore pravidla v Firebase Console!');
-            throw testError; // Necháme propadnout a zobrazit chybu
+            
+            if (testError.code === 'permission-denied') {
+                console.error('🚨 PERMISSION DENIED - Možné příčiny:');
+                console.error('   1. Pravidla nejsou publikována v Firebase Console');
+                console.error('   2. Pravidla jsou špatně nastavena');
+                console.error('   3. App Check blokuje požadavky (i když není inicializován)');
+                console.error('   4. CollectionGroup dotaz potřebuje index (ale to by byla jiná chyba)');
+                console.error('');
+                console.error('📋 ŘEŠENÍ:');
+                console.error('   1. Jdi do Firebase Console → Firestore Database → Rules');
+                console.error('   2. Zkopíruj pravidla z firestore-rules.txt');
+                console.error('   3. Klikni na Publish');
+                console.error('   4. Počkej 1-2 minuty');
+                console.error('   5. Obnov stránku');
+            }
+            
+            // CollectionGroup nefunguje - použít alternativní metodu
+            console.log('🔄 CollectionGroup nefunguje, používám alternativní metodu...');
+            await tryAlternativeLoadMethod();
+            return; // Ukončit, protože collectionGroup nefunguje
         }
+        
+        // Pokud collectionGroup funguje, nastavit real-time listener
         
         // Bez orderBy - seřadíme v JavaScriptu
         console.log('🔍 Query bez orderBy (seřadíme v JS)');
@@ -288,11 +333,11 @@ async function checkAndExpireTopAdsInServices() {
             return;
         }
         
-        const { getDocs, collectionGroup, updateDoc, doc } = await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js');
+        const { getDocs, collection, updateDoc } = await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js');
         
-        // Načíst všechny inzeráty napříč uživateli
-        const servicesRef = collectionGroup(servicesFirebaseDb, 'inzeraty');
-        const adsSnapshot = await getDocs(servicesRef);
+        // Načíst pouze inzeráty přihlášeného uživatele (může je aktualizovat)
+        const userAdsRef = collection(servicesFirebaseDb, 'users', currentUser.uid, 'inzeraty');
+        const adsSnapshot = await getDocs(userAdsRef);
         
         const now = new Date();
         let expiredCount = 0;
@@ -305,12 +350,16 @@ async function checkAndExpireTopAdsInServices() {
                 const expiresAt = adData.topExpiresAt.toDate ? adData.topExpiresAt.toDate() : new Date(adData.topExpiresAt);
                 
                 if (now > expiresAt) {
-                    // TOP vypršel - zrušit TOP status
-                    await updateDoc(adDoc.ref, {
-                        isTop: false,
-                        topExpiredAt: now
-                    });
-                    expiredCount++;
+                    // TOP vypršel - zrušit TOP status (pouze vlastní inzeráty)
+                    try {
+                        await updateDoc(adDoc.ref, {
+                            isTop: false,
+                            topExpiredAt: now
+                        });
+                        expiredCount++;
+                    } catch (updateError) {
+                        console.warn('⚠️ Nepodařilo se aktualizovat expirovaný TOP inzerát:', adDoc.id, updateError);
+                    }
                 }
             }
         }
@@ -321,6 +370,101 @@ async function checkAndExpireTopAdsInServices() {
         
     } catch (error) {
         console.error('Chyba při kontrole expirace TOP v services:', error);
+        // Nevyhazovat chybu - jen logovat, aby neblokovala načítání inzerátů
+    }
+}
+
+// Alternativní metoda načítání inzerátů bez collectionGroup
+async function tryAlternativeLoadMethod() {
+    try {
+        console.log('🔄 Alternativní metoda: Načítám inzeráty přes users kolekci...');
+        const { collection, getDocs, query, limit, onSnapshot } = await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js');
+        
+        // Funkce pro načtení všech inzerátů
+        async function loadAllAds() {
+            // Načíst všechny uživatele (limit 100 pro test)
+            const usersRef = collection(servicesFirebaseDb, 'users');
+            const usersQuery = query(usersRef, limit(100));
+            const usersSnapshot = await getDocs(usersQuery);
+            
+            console.log('📊 Načteno uživatelů:', usersSnapshot.size);
+            
+            if (usersSnapshot.size === 0) {
+                console.warn('⚠️ Žádní uživatelé nenalezeni - databáze je prázdná');
+                return [];
+            }
+            
+            // Pro každého uživatele načíst jeho inzeráty
+            const services = [];
+            const loadPromises = [];
+            
+            usersSnapshot.forEach((userDoc) => {
+                const userId = userDoc.id;
+                const userAdsRef = collection(servicesFirebaseDb, 'users', userId, 'inzeraty');
+                
+                const loadPromise = getDocs(userAdsRef).then((adsSnapshot) => {
+                    adsSnapshot.forEach((adDoc) => {
+                        const data = adDoc.data();
+                        services.push({
+                            id: adDoc.id,
+                            userId: userId,
+                            ...data,
+                            createdAt: data.createdAt?.toDate() || new Date()
+                        });
+                    });
+                }).catch((error) => {
+                    console.warn(`⚠️ Chyba při načítání inzerátů uživatele ${userId}:`, error);
+                });
+                
+                loadPromises.push(loadPromise);
+            });
+            
+            await Promise.all(loadPromises);
+            
+            // Seřadit podle data vytvoření
+            services.sort((a, b) => {
+                const dateA = new Date(a.createdAt);
+                const dateB = new Date(b.createdAt);
+                return dateB - dateA;
+            });
+            
+            return services;
+        }
+        
+        // Načíst inzeráty poprvé
+        allServices = await loadAllAds();
+        console.log(`✅ Alternativní metoda: Načteno ${allServices.length} inzerátů`);
+        
+        if (allServices.length === 0) {
+            console.warn('⚠️ Alternativní metoda nenašla žádné inzeráty');
+            initLocalFallback();
+            return;
+        }
+        
+        // Zobrazit inzeráty
+        filterServices();
+        updateStats();
+        updateConnectionStatus(true);
+        console.log(`✅ Po filtrování zobrazeno: ${filteredServices.length} z ${allServices.length} inzerátů`);
+        
+        // Nastavit periodické obnovování (každých 30 sekund, protože nemáme real-time listener)
+        setInterval(async () => {
+            try {
+                const newServices = await loadAllAds();
+                if (newServices.length !== allServices.length) {
+                    console.log('🔄 Detekována změna v inzerátech, aktualizuji...');
+                    allServices = newServices;
+                    filterServices();
+                    updateStats();
+                }
+            } catch (error) {
+                console.warn('⚠️ Chyba při periodickém načítání:', error);
+            }
+        }, 30000); // 30 sekund
+        
+    } catch (error) {
+        console.error('❌ Alternativní metoda selhala:', error);
+        initLocalFallback();
     }
 }
 

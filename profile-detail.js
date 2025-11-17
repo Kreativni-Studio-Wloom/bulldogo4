@@ -187,54 +187,130 @@ async function loadUserProfile(userId) {
 // Load user services
 async function loadUserServices(userId) {
     try {
+        console.log('🔍 Loading services for user:', userId);
         const { getDocs, collection } = await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js');
+        
+        if (!window.firebaseDb) {
+            throw new Error('Firebase DB není dostupný');
+        }
         
         // Load user's services
         const servicesRef = collection(window.firebaseDb, 'users', userId, 'inzeraty');
+        console.log('📁 Services reference:', servicesRef.path);
+        
         const servicesSnap = await getDocs(servicesRef);
+        console.log('📊 Services snapshot size:', servicesSnap.size);
         
         userServices = [];
         servicesSnap.forEach(doc => {
             const serviceData = doc.data();
             serviceData.id = doc.id;
-            console.log('📄 Service data:', serviceData);
-            console.log('🖼️ Service images:', serviceData.images);
-            console.log('🖼️ Service image:', serviceData.image);
-            console.log('🖼️ Service photo:', serviceData.photo);
+            console.log('📄 Service data:', doc.id, {
+                title: serviceData.title,
+                category: serviceData.category,
+                status: serviceData.status
+            });
             userServices.push(serviceData);
         });
         
         console.log('✅ User services loaded:', userServices.length);
-        console.log('📊 All services data:', userServices);
+        
+        if (userServices.length === 0) {
+            console.warn('⚠️ Žádné služby nenalezeny pro uživatele:', userId);
+            console.warn('⚠️ Zkontrolujte, zda existují dokumenty v: users/' + userId + '/inzeraty/');
+        }
         
     } catch (error) {
         console.error('❌ Error loading user services:', error);
+        console.error('Error details:', {
+            code: error.code,
+            message: error.message,
+            stack: error.stack
+        });
         userServices = [];
+        
+        // Zobrazit uživatelsky přívětivou chybu
+        if (error.code === 'permission-denied') {
+            console.error('❌ Permission denied - zkontrolujte Firestore pravidla!');
+        }
     }
 }
 
 // Load user reviews
 async function loadUserReviews(userId) {
     try {
-        const { getDocs, collection } = await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js');
-        
-        // Load reviews where this user is the reviewed user
-        const reviewsRef = collection(window.firebaseDb, 'reviews');
-        const reviewsSnap = await getDocs(reviewsRef);
+        const { getDocs, collection, collectionGroup } = await import('https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js');
         
         userReviews = [];
-        reviewsSnap.forEach(doc => {
-            const reviewData = doc.data();
-            if (reviewData.reviewedUserId === userId) {
-                reviewData.id = doc.id;
-                userReviews.push(reviewData);
-            }
-        });
         
-        console.log('✅ User reviews loaded:', userReviews.length);
+        // 1. Načíst recenze na profilu uživatele (users/{userId}/reviews)
+        try {
+            const profileReviewsRef = collection(window.firebaseDb, 'users', userId, 'reviews');
+            const profileReviewsSnap = await getDocs(profileReviewsRef);
+            profileReviewsSnap.forEach(doc => {
+                const reviewData = doc.data();
+                reviewData.id = doc.id;
+                reviewData.type = 'profile';
+                userReviews.push(reviewData);
+            });
+            console.log('✅ Profile reviews loaded:', profileReviewsSnap.size);
+        } catch (profileError) {
+            console.warn('⚠️ Error loading profile reviews:', profileError);
+        }
+        
+        // 2. Načíst recenze na inzerátech uživatele pomocí collectionGroup
+        try {
+            const adReviewsGroup = collectionGroup(window.firebaseDb, 'reviews');
+            const adReviewsSnap = await getDocs(adReviewsGroup);
+            adReviewsSnap.forEach(docSnap => {
+                const reviewData = docSnap.data();
+                // Zkontrolovat, zda recenze patří k inzerátu tohoto uživatele
+                const parent = docSnap.ref.parent; // reviews collection
+                const adDoc = parent?.parent; // adId document
+                const inzeraty = adDoc?.parent; // 'inzeraty' collection
+                const userDoc = inzeraty?.parent; // user uid document
+                
+                if (userDoc && userDoc.id === userId && inzeraty.id === 'inzeraty') {
+                    reviewData.id = docSnap.id;
+                    reviewData.type = 'ad';
+                    reviewData.adId = adDoc.id;
+                    userReviews.push(reviewData);
+                }
+            });
+            console.log('✅ Ad reviews loaded from collectionGroup');
+        } catch (adReviewsError) {
+            console.warn('⚠️ Error loading ad reviews:', adReviewsError);
+        }
+        
+        // 3. Fallback: zkusit root kolekci reviews (pokud existuje)
+        try {
+            const rootReviewsRef = collection(window.firebaseDb, 'reviews');
+            const rootReviewsSnap = await getDocs(rootReviewsRef);
+            rootReviewsSnap.forEach(doc => {
+                const reviewData = doc.data();
+                if (reviewData.reviewedUserId === userId) {
+                    // Zkontrolovat, zda už není v seznamu
+                    const exists = userReviews.some(r => r.id === doc.id);
+                    if (!exists) {
+                        reviewData.id = doc.id;
+                        reviewData.type = reviewData.type || 'unknown';
+                        userReviews.push(reviewData);
+                    }
+                }
+            });
+            console.log('✅ Root reviews checked');
+        } catch (rootError) {
+            console.warn('⚠️ Error loading root reviews (this is OK if collection doesn\'t exist):', rootError.message);
+        }
+        
+        console.log('✅ Total user reviews loaded:', userReviews.length);
         
     } catch (error) {
         console.error('❌ Error loading user reviews:', error);
+        console.error('Error details:', {
+            code: error.code,
+            message: error.message
+        });
         userReviews = [];
     }
 }
