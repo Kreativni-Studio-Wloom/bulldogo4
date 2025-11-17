@@ -171,27 +171,18 @@ async function setupRealtimeListener() {
                 console.warn('⚠️ Zkuste vytvořit testovací inzerát přes aplikaci');
             }
         } catch (testError) {
-            console.error('❌ TEST COLLECTIONGROUP DOTAZ SELHAL:', testError);
-            console.error('Error code:', testError.code);
-            console.error('Error message:', testError.message);
-            
+            // CollectionGroup nefunguje - použít alternativní metodu (tichý režim, protože alternativní metoda funguje)
+            // Nevyhazovat error, protože alternativní metoda úspěšně načítá inzeráty
             if (testError.code === 'permission-denied') {
-                console.error('🚨 PERMISSION DENIED - Možné příčiny:');
-                console.error('   1. Pravidla nejsou publikována v Firebase Console');
-                console.error('   2. Pravidla jsou špatně nastavena');
-                console.error('   3. App Check blokuje požadavky (i když není inicializován)');
-                console.error('   4. CollectionGroup dotaz potřebuje index (ale to by byla jiná chyba)');
-                console.error('');
-                console.error('📋 ŘEŠENÍ:');
-                console.error('   1. Jdi do Firebase Console → Firestore Database → Rules');
-                console.error('   2. Zkopíruj pravidla z firestore-rules.txt');
-                console.error('   3. Klikni na Publish');
-                console.error('   4. Počkej 1-2 minuty');
-                console.error('   5. Obnov stránku');
+                // Tichý režim - pouze debug log, ne error
+                console.log('ℹ️ CollectionGroup dotaz není dostupný (používám alternativní metodu)');
+            } else {
+                // Pro jiné chyby zobrazit warning
+                console.warn('⚠️ CollectionGroup dotaz selhal:', testError.message);
             }
             
             // CollectionGroup nefunguje - použít alternativní metodu
-            console.log('🔄 CollectionGroup nefunguje, používám alternativní metodu...');
+            console.log('🔄 Používám alternativní metodu načítání inzerátů...');
             await tryAlternativeLoadMethod();
             return; // Ukončit, protože collectionGroup nefunguje
         }

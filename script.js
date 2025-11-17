@@ -833,9 +833,10 @@ console.log(`
 })();
 // ==============================================================
 
-// Error handling for missing elements
+// Error handling for missing elements - tichý režim (nevyhazovat warnings)
 document.addEventListener('DOMContentLoaded', () => {
-    // Check if all required elements exist
+    // Check if all required elements exist (pouze pro debug, nevyhazovat warnings)
+    // Tyto elementy nemusí být na všech stránkách, což je normální
     const requiredElements = [
         '.header',
         '.hero',
@@ -845,11 +846,12 @@ document.addEventListener('DOMContentLoaded', () => {
         '.footer'
     ];
     
-    requiredElements.forEach(selector => {
-        if (!document.querySelector(selector)) {
-            console.warn(`Element ${selector} not found`);
-        }
-    });
+    // Tichý režim - nevyhazovat warnings, protože tyto elementy nemusí být na všech stránkách
+    // requiredElements.forEach(selector => {
+    //     if (!document.querySelector(selector)) {
+    //         console.warn(`Element ${selector} not found`);
+    //     }
+    // });
 });
 
 // Clockwise (12 směrů) pro hero bubliny
